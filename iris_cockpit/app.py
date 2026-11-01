@@ -188,8 +188,9 @@ class IrisCockpit(App):
                     with card(Vertical(), "Download"):
                         with Grid(classes="form single"):
                             yield Label("Token Hugging Face")
-                            yield Input(placeholder="solo per i modelli con licenza; non viene salvato",
+                            yield Input(placeholder="serve solo per 9B e FLUX.3; non viene salvato",
                                         password=True, id="hf-token", compact=True)
+                        yield Static("", id="token-hint", classes="note")
                         with Horizontal(classes="buttons"):
                             yield Button("Scarica selezionato", id="download", variant="primary", compact=True)
                             yield Button("Elimina selezionato", id="delete-model", variant="error", compact=True)
@@ -256,6 +257,7 @@ class IrisCockpit(App):
         self.query_one("#cockpit-update", Button).display = False
         self.query_one("#changelog").display = False
         self.refresh_models()
+        self.update_token_hint()
         self.render_host()
         self.action_refresh()
 
@@ -280,20 +282,21 @@ class IrisCockpit(App):
     def _set_cockpit(self, info: CockpitInfo) -> None:
         self.cockpit = info
         t = Text()
-        kv(t, "Versione", f"v{info.version}")
-        kv(t, "Commit", info.commit[:7] or "sconosciuto")
+        kv(t, "Installato", f"v{info.version}  {info.commit[:7] or '(commit sconosciuto)'}")
         r = info.remote
         if not r.ok:
             kv(t, "GitHub", f"non raggiungibile ({r.error})", ERR)
         else:
-            kv(t, "GitHub", f"{r.sha[:7]}  {r.date}")
-            if not info.update_available:
-                t.append("● Aggiornato", style=f"bold {OK}")
-            else:
+            kv(t, "GitHub", f"{'v' + info.remote_version if info.remote_version else '?'}  {r.sha[:7]}  {r.date}")
+            if info.update_available:
                 n = len(r.new_commits)
-                t.append(f"● Nuova versione{f' ({n} commit)' if n else ''}", style=f"bold {WARN}")
+                t.append(f"● Nuova versione disponibile{f' ({n} commit)' if n else ''}", style=f"bold {WARN}")
                 for line in r.new_commits[:6]:
                     t.append("\n" + self._short(line.split("  ", 2)[-1], 40), style=MUTED)
+            elif not info.verified:
+                t.append("● Impossibile verificare: riprova più tardi (tasto u)", style=f"bold {WARN}")
+            else:
+                t.append("● Aggiornato", style=f"bold {OK}")
         self.query_one("#cockpit", Static).update(t)
         self.query_one("#cockpit-update", Button).display = info.update_available
         if info.update_available:
@@ -522,6 +525,28 @@ class IrisCockpit(App):
         if table.cursor_row is None or table.cursor_row >= len(MODELS):
             return None
         return MODELS[table.cursor_row]
+
+    @on(DataTable.RowHighlighted, "#models-table")
+    def _model_highlighted(self) -> None:
+        self.update_token_hint()
+
+    def update_token_hint(self) -> None:
+        spec = self.selected_model()
+        if not spec:
+            return
+        token_input = self.query_one("#hf-token", Input)
+        t = Text()
+        if spec.gated:
+            token_input.disabled = False
+            t.append(f"{spec.name}: serve un token Hugging Face. ", style=f"bold {WARN}")
+            t.append(f"Accetta la licenza su huggingface.co/{spec.hf_repo}, poi crea un token "
+                     "di lettura su huggingface.co/settings/tokens.", style=MUTED)
+            if os.environ.get("HF_TOKEN"):
+                t.append(" Se lasci vuoto uso HF_TOKEN dell'ambiente.", style=MUTED)
+        else:
+            token_input.disabled = True
+            t.append(f"{spec.name}: si scarica senza token.", style=f"bold {OK}")
+        self.query_one("#token-hint", Static).update(t)
 
     @on(Button.Pressed, "#refresh-models")
     def _refresh_models(self) -> None:

@@ -315,14 +315,42 @@ class CockpitInfo:
     version: str
     commit: str        # commit installato, "" se sconosciuto (es. install da cartella locale)
     remote: RemoteInfo
+    remote_version: str = ""   # __version__ letto dal commit remoto
 
     @property
     def update_available(self) -> bool:
         r = self.remote
         if not (r.ok and r.sha) or self.commit == r.sha:
             return False
+        # Segnale principale: numero di versione più alto su GitHub. Non dipende
+        # dall'API (limite di 60 richieste/ora senza login) né dalla sua cache.
+        if self.remote_version and _vtuple(self.remote_version) > _vtuple(self.version):
+            return True
         # Commit installato sconosciuto (install da cartella): allinea a GitHub.
         return not self.commit or r.status == "ahead"
+
+    @property
+    def verified(self) -> bool:
+        """True se si è potuto stabilire se c'è un aggiornamento."""
+        return bool(self.remote.ok and (self.remote_version or self.remote.status
+                                        or self.commit == self.remote.sha))
+
+
+def _vtuple(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+
+def remote_cockpit_version(sha: str) -> str:
+    """Legge __version__ dal commit `sha` su raw.githubusercontent.com (fuori dal limite dell'API)."""
+    slug = _github_slug(COCKPIT_REPO)
+    url = f"https://raw.githubusercontent.com/{slug}/{sha}/iris_cockpit/__init__.py"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "iris-cockpit"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            m = re.search(r'__version__\s*=\s*"([^"]+)"', r.read().decode())
+            return m.group(1) if m else ""
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def installed_cockpit_commit() -> str:
@@ -341,7 +369,9 @@ def installed_cockpit_commit() -> str:
 def check_cockpit(version: str) -> CockpitInfo:
     cfg = Config(iris_repo=COCKPIT_REPO, iris_ref=COCKPIT_REF)
     commit = installed_cockpit_commit()
-    return CockpitInfo(version=version, commit=commit, remote=check_remote(cfg, commit))
+    remote = check_remote(cfg, commit)
+    rv = remote_cockpit_version(remote.sha) if remote.ok and remote.sha else ""
+    return CockpitInfo(version=version, commit=commit, remote=remote, remote_version=rv)
 
 
 def cockpit_update_cmd(sha: str) -> list[str] | None:
