@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iris-cockpit"
+version = "0.1.0"
+description = "TUI per installare, aggiornare e usare antirez/iris.c in Podman su AMD Strix Halo"
+requires-python = ">=3.10"
+dependencies = ["textual>=1.0"]
+license = { text = "MIT" }
+
+[project.scripts]
+iris-cockpit = "iris_cockpit.app:main"
+
+[tool.setuptools]
+packages = ["iris_cockpit"]
+
+[tool.setuptools.package-data]
+iris_cockpit = ["assets/Containerfile"]

@@ -1,0 +1,64 @@
+# Iris (antirez/iris.c) per AMD Strix Halo (gfx1151), ROCm dei pacchetti Fedora.
+#
+# Costruita dal cockpit con:
+#   podman build -t iris-strix-halo:latest \
+#     --build-arg IRIS_COMMIT=<sha> -f Containerfile .
+#
+# Va costruita SULLA macchina Strix Halo: il Makefile di Iris usa -march=native
+# per la parte CPU, e GPU_ARCH fissa il target GPU (nel build non c'è una GPU).
+
+ARG FEDORA_VERSION=44
+FROM registry.fedoraproject.org/fedora:${FEDORA_VERSION}
+
+ARG FEDORA_VERSION
+ARG IRIS_REPO=https://github.com/antirez/iris.c.git
+ARG IRIS_REF=main
+ARG IRIS_COMMIT=unknown
+ARG GPU_ARCH=gfx1151
+
+# Toolchain + ROCm. Le dipendenze obbligatorie falliscono il build se mancano;
+# quelle opzionali (strumenti diagnostici) vengono saltate se non disponibili.
+RUN dnf -y install --setopt=install_weak_deps=False \
+        gcc make git curl findutils which procps-ng \
+        python3 python3-numpy python3-pillow \
+        hipcc rocm-hip-devel hipblas-devel rocblas-devel rocminfo \
+ && dnf -y install --skip-unavailable --setopt=install_weak_deps=False \
+        hipblaslt-devel rocm-smi \
+ && dnf clean all
+
+# Il cambio di IRIS_COMMIT invalida solo da qui in giù: gli aggiornamenti di
+# Iris non riscaricano ROCm.
+RUN git clone --branch "${IRIS_REF}" "${IRIS_REPO}" /opt/iris \
+ && cd /opt/iris \
+ && if [ "${IRIS_COMMIT}" != "unknown" ]; then git checkout --quiet "${IRIS_COMMIT}"; fi \
+ && make rocm GPU_ARCH="${GPU_ARCH}" ROCM_HOME=/usr HIPCC="hipcc -fPIC" \
+ && git rev-parse HEAD > /opt/iris/.commit \
+ && git log -1 --format=%cI > /opt/iris/.commit_date \
+ && ln -s /opt/iris/iris /usr/local/bin/iris
+
+# Helper: scarica i modelli nella cartella montata su /models.
+RUN printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      'cd /models' \
+      'exec /opt/iris/download_model.sh "$@"' \
+      > /usr/local/bin/iris-download \
+ && printf '%s\n' \
+      '#!/bin/sh' \
+      'set -e' \
+      'MODEL_DIR="${1:-/models/flux-klein-4b}"' \
+      'cd /opt/iris' \
+      'exec python3 run_test.py --flux-binary /opt/iris/iris --model-dir "$MODEL_DIR" --quick' \
+      > /usr/local/bin/iris-selftest \
+ && chmod +x /usr/local/bin/iris-download /usr/local/bin/iris-selftest
+
+LABEL io.iris.managed="true" \
+      io.iris.commit="${IRIS_COMMIT}" \
+      io.iris.ref="${IRIS_REF}" \
+      io.iris.repo="${IRIS_REPO}" \
+      io.iris.gpu_arch="${GPU_ARCH}" \
+      io.iris.fedora="${FEDORA_VERSION}"
+
+ENV IRIS_MODELS=/models
+WORKDIR /output
+CMD ["iris", "--help"]
