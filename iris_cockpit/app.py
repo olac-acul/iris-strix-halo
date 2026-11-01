@@ -47,7 +47,7 @@ class Confirm(ModalScreen[bool]):
 
 class IrisCockpit(App):
     TITLE = "Iris Cockpit"
-    SUB_TITLE = "antirez/iris.c su AMD Strix Halo"
+    SUB_TITLE = f"antirez/iris.c su AMD Strix Halo · cockpit v{__version__}"
     CSS = """
     Screen { background: $surface; }
     #status, #changelog, #host { padding: 0 1; border: round $primary 40%; margin: 0 0 1 0; height: auto; }
