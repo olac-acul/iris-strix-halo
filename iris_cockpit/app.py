@@ -20,9 +20,10 @@ from textual.widgets import (
 
 from . import __version__
 from .runtime import (
-    MODELS, Config, ImageInfo, RemoteInfo, build_cmd, check_remote, dir_size_gb,
-    engine_available, host_report, inspect_image, model_status, now_stamp, pretty,
-    prune_cmd, remove_image_cmd, run_cmd,
+    COCKPIT_REPO, MODELS, CockpitInfo, Config, ImageInfo, RemoteInfo, build_cmd,
+    check_cockpit, check_remote, cockpit_update_cmd, dir_size_gb, engine_available,
+    host_report, inspect_image, model_status, now_stamp, pretty, prune_cmd,
+    remove_image_cmd, run_cmd,
 )
 
 SIZES = [256, 512, 768, 1024, 1280, 1536, 1792]
@@ -50,7 +51,7 @@ class IrisCockpit(App):
     SUB_TITLE = f"antirez/iris.c su AMD Strix Halo · cockpit v{__version__}"
     CSS = """
     Screen { background: $surface; }
-    #status, #changelog, #host { padding: 0 1; border: round $primary 40%; margin: 0 0 1 0; height: auto; }
+    #status, #changelog, #cockpit, #host { padding: 0 1; border: round $primary 40%; margin: 0 0 1 0; height: auto; }
     .buttons { height: auto; margin: 0 0 1 0; }
     .buttons Button { margin: 0 1 0 0; }
     .field { height: auto; margin: 0 0 1 0; }
@@ -75,6 +76,8 @@ class IrisCockpit(App):
         self.cfg = Config.load()
         self.image = ImageInfo(present=False)
         self.remote = RemoteInfo(ok=False)
+        self.cockpit: CockpitInfo | None = None
+        self.restart = False
 
     # ------------------------------------------------------------------ UI --
 
@@ -94,6 +97,9 @@ class IrisCockpit(App):
                         yield Button("Apri shell", id="shell")
                         yield Button("Elimina immagine", id="rmi", variant="error")
                     yield Static("", id="changelog")
+                    yield Static("Cockpit: controllo aggiornamenti...", id="cockpit")
+                    with Horizontal(classes="buttons"):
+                        yield Button("Aggiorna cockpit", id="cockpit-update", variant="success")
                     yield Static("", id="host")
             with TabPane("Modelli", id="tab-models"):
                 with VerticalScroll():
@@ -161,6 +167,7 @@ class IrisCockpit(App):
         table = self.query_one("#models-table", DataTable)
         table.add_columns("Modello", "Stato", "Dimensione", "Licenza", "Token")
         self.query_one("#prompt", TextArea).text = "A picture of a lighthouse at dawn, ASA 400 film"
+        self.query_one("#cockpit-update", Button).display = False
         self.refresh_models()
         self.render_host()
         self.action_refresh()
@@ -180,6 +187,32 @@ class IrisCockpit(App):
         if check_remote_too:
             remote = check_remote(self.cfg, image.commit if image.present else "")
             self.call_from_thread(self._set_status, image, remote)
+            cockpit = check_cockpit(__version__)
+            self.call_from_thread(self._set_cockpit, cockpit)
+
+    def _set_cockpit(self, info: CockpitInfo) -> None:
+        self.cockpit = info
+        t = Text()
+        t.append("Cockpit   ", style="dim")
+        t.append(f"v{info.version}  {info.commit[:7] or 'commit sconosciuto'}\n")
+        t.append("GitHub    ", style="dim")
+        r = info.remote
+        if not r.ok:
+            t.append(f"non raggiungibile ({r.error})", style="red")
+        else:
+            t.append(f"{r.sha[:7]}  {r.date}  {r.message}\n")
+            if not info.update_available:
+                t.append("Il cockpit è aggiornato.", style="bold green")
+            else:
+                n = len(r.new_commits)
+                t.append(f"Nuova versione del cockpit{f' ({n} commit)' if n else ''}: "
+                         "premi “Aggiorna cockpit”.", style="bold yellow")
+                for line in r.new_commits[:10]:
+                    t.append("\n  " + line, style="dim")
+        self.query_one("#cockpit", Static).update(t)
+        self.query_one("#cockpit-update", Button).display = info.update_available
+        if info.update_available:
+            self.notify("È disponibile una nuova versione del cockpit.", timeout=6)
 
     def _set_status(self, image: ImageInfo, remote: RemoteInfo | None) -> None:
         self.image = image
@@ -277,6 +310,24 @@ class IrisCockpit(App):
     @on(Button.Pressed, "#build")
     def _build(self) -> None:
         self.do_build(fresh=False)
+
+    @on(Button.Pressed, "#cockpit-update")
+    def _cockpit_update(self) -> None:
+        info = self.cockpit
+        if not info or not info.update_available:
+            return
+        cmd = cockpit_update_cmd(info.remote.sha)
+        if cmd is None:
+            self.notify("Né pip né uv disponibili: aggiorna a mano con "
+                        f"pipx uninstall iris-cockpit && pipx install git+{COCKPIT_REPO}",
+                        severity="error", timeout=15)
+            return
+        rc = self.run_suspended(cmd, f"Aggiornamento del cockpit a {info.remote.sha[:7]}")
+        if rc == 0:
+            self.restart = True
+            self.exit()
+        else:
+            self.notify("Aggiornamento del cockpit non riuscito: controlla l'output.", severity="error")
 
     @on(Button.Pressed, "#rebuild")
     def _rebuild(self) -> None:
@@ -506,7 +557,11 @@ def main() -> None:
     if "--version" in sys.argv:
         print(__version__)
         return
-    IrisCockpit().run()
+    app = IrisCockpit()
+    app.run()
+    if app.restart:
+        # Riavvia con il codice appena installato
+        os.execv(sys.executable, [sys.executable, "-m", "iris_cockpit", *sys.argv[1:]])
 
 
 if __name__ == "__main__":

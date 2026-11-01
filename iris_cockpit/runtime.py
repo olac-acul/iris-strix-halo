@@ -298,6 +298,62 @@ def check_remote(cfg: Config, installed_sha: str = "") -> RemoteInfo:
 
 
 # --------------------------------------------------------------------------- #
+# Aggiornamento del cockpit stesso
+# --------------------------------------------------------------------------- #
+
+COCKPIT_REPO = "https://github.com/olac-acul/iris-strix-halo.git"
+COCKPIT_REF = "main"
+
+
+@dataclass
+class CockpitInfo:
+    version: str
+    commit: str        # commit installato, "" se sconosciuto (es. install da cartella locale)
+    remote: RemoteInfo
+
+    @property
+    def update_available(self) -> bool:
+        return bool(self.remote.ok and self.remote.sha and self.commit != self.remote.sha)
+
+
+def installed_cockpit_commit() -> str:
+    """Commit da cui è stato installato il pacchetto (PEP 610, scritto da pip e uv)."""
+    from importlib.metadata import PackageNotFoundError, distribution
+    try:
+        raw = distribution("iris-cockpit").read_text("direct_url.json")
+    except PackageNotFoundError:
+        return ""
+    try:
+        return (json.loads(raw or "{}").get("vcs_info") or {}).get("commit_id", "")
+    except ValueError:
+        return ""
+
+
+def check_cockpit(version: str) -> CockpitInfo:
+    cfg = Config(iris_repo=COCKPIT_REPO, iris_ref=COCKPIT_REF)
+    commit = installed_cockpit_commit()
+    return CockpitInfo(version=version, commit=commit, remote=check_remote(cfg, commit))
+
+
+def cockpit_update_cmd(sha: str) -> list[str] | None:
+    """Reinstalla il cockpit al commit `sha` nell'ambiente in cui gira ora.
+
+    Il commit esplicito evita che pip/uv riusino una versione in cache, e non
+    passa da `pipx install --force`, che con il backend uv fallisce.
+    """
+    import importlib.util
+    import sys
+    spec = f"iris-cockpit @ git+{COCKPIT_REPO}@{sha}"
+    if importlib.util.find_spec("pip") is not None:
+        return [sys.executable, "-m", "pip", "install", "--disable-pip-version-check",
+                "--no-cache-dir", "--force-reinstall", spec]
+    if shutil.which("uv"):
+        return ["uv", "pip", "install", "--python", sys.executable,
+                "--reinstall-package", "iris-cockpit", spec]
+    return None
+
+
+# --------------------------------------------------------------------------- #
 # Host checks
 # --------------------------------------------------------------------------- #
 
