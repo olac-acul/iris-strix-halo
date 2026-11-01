@@ -21,20 +21,14 @@ pipx install git+https://github.com/olac-acul/iris-strix-halo.git
 iris-cockpit
 ```
 
-Per aggiornare il cockpit stesso (non Iris, che si aggiorna dalla TUI):
-
-```bash
-pipx uninstall iris-cockpit
-pipx install git+https://github.com/olac-acul/iris-strix-halo.git
-iris-cockpit --version        # la versione compare anche nel sottotitolo della TUI
-```
-
 In alternativa, da un clone locale:
 
 ```bash
 git clone https://github.com/olac-acul/iris-strix-halo.git
 pipx install ./iris-strix-halo
 ```
+
+Poi il cockpit si aggiorna da solo dalla TUI (vedi *Aggiornamenti del cockpit*).
 
 Al primo avvio la scheda **Stato** mostra cosa manca sull'host. Premi **Installa / aggiorna**: il primo build scarica Fedora e ROCm (alcuni GB) e compila Iris. Va fatto sulla macchina Strix Halo stessa, perché il Makefile di Iris usa `-march=native` per la parte CPU.
 
@@ -48,6 +42,18 @@ All'avvio (e con il tasto `u`) il cockpit confronta il commit di Iris dentro l'i
 - **Ricostruisci da zero** riscarica l'immagine Fedora e i pacchetti ROCm più recenti, senza cache. Usalo ogni tanto, o quando Fedora pubblica un aggiornamento di ROCm.
 
 Dopo ogni build riuscito le immagini vecchie vengono rimosse. I modelli non vengono mai toccati.
+
+### Aggiornamenti del cockpit
+
+Allo stesso modo il cockpit controlla se su GitHub c'è una sua versione più recente (sezione *Cockpit* nella scheda Stato, con l'elenco delle novità). Se c'è, compare il pulsante **Aggiorna cockpit**: reinstalla il pacchetto al commit esatto nello stesso ambiente pipx (con pip o uv, a seconda di come pipx l'ha creato) e riavvia la TUI. Non serve `pipx --force` né `pipx reinstall`, che con il backend uv di pipx non funzionano.
+
+Se il cockpit è troppo vecchio per avere quel pulsante (versioni prima della 0.2.0), aggiornalo a mano una volta:
+
+```bash
+pipx uninstall iris-cockpit
+pipx install git+https://github.com/olac-acul/iris-strix-halo.git
+iris-cockpit --version
+```
 
 ## Dove finiscono i file
 
