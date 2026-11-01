@@ -4,7 +4,7 @@ Un container Podman con [Iris](https://github.com/antirez/iris.c) di antirez gi√
 
 ## Cosa serve sull'host
 
-Una distro con kernel recente e driver `amdgpu` attivo (deve esistere `/dev/kfd`), Podman, Python 3.10+ e pipx. L'utente deve stare nei gruppi `render` e `video`:
+Una distro con kernel recente e driver `amdgpu` attivo (deve esistere `/dev/kfd`), Podman, Python 3.10+ e pipx. L'utente deve poter aprire `/dev/kfd` e `/dev/dri/renderD*`: su molte distro (Fedora compresa) sono gi√† accessibili a tutti, altrimenti aggiungilo ai gruppi `render` e `video`. La scheda Stato lo verifica:
 
 ```bash
 sudo usermod -aG render,video "$USER"   # poi logout/login
@@ -24,7 +24,9 @@ iris-cockpit
 Per aggiornare il cockpit stesso (non Iris, che si aggiorna dalla TUI):
 
 ```bash
-pipx reinstall iris-cockpit   # riscarica l'ultima versione da GitHub
+pipx uninstall iris-cockpit
+pipx install git+https://github.com/olac-acul/iris-strix-halo.git
+iris-cockpit --version        # la versione compare anche nel sottotitolo della TUI
 ```
 
 In alternativa, da un clone locale:

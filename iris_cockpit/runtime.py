@@ -301,16 +301,43 @@ def check_remote(cfg: Config, installed_sha: str = "") -> RemoteInfo:
 # Host checks
 # --------------------------------------------------------------------------- #
 
+def _can_rw(path: Path) -> bool:
+    return os.access(path, os.R_OK | os.W_OK)
+
+
 def host_report() -> list[tuple[str, bool, str]]:
     rows: list[tuple[str, bool, str]] = []
-    rows.append(("/dev/kfd", Path("/dev/kfd").exists(), "presente" if Path("/dev/kfd").exists() else "mancante: driver amdgpu/KFD non attivo"))
+    fix = "sudo usermod -aG render,video $USER, poi esci e rientra"
+
+    # Conta il permesso reale sui dispositivi, non l'appartenenza ai gruppi:
+    # su molte distro le regole udev li rendono accessibili a tutti (0666).
+    kfd = Path("/dev/kfd")
+    kfd_ok = kfd.exists() and _can_rw(kfd)
+    if not kfd.exists():
+        rows.append(("/dev/kfd", False, "mancante: driver amdgpu/KFD non attivo"))
+    else:
+        rows.append(("/dev/kfd", kfd_ok, "accessibile" if kfd_ok else f"non accessibile: {fix}"))
+
+    nodes = sorted(Path("/dev/dri").glob("renderD*"))
+    usable = [n for n in nodes if _can_rw(n)]
+    if not nodes:
+        rows.append(("render node", False, "nessun /dev/dri/renderD*: driver amdgpu non attivo"))
+    elif usable:
+        rows.append(("render node", True, f"{', '.join(n.name for n in usable)} accessibile"))
+    else:
+        rows.append(("render node", False, f"{', '.join(n.name for n in nodes)} non accessibile: {fix}"))
+
     try:
         my_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
     except KeyError:
         my_groups = set()
-    for g in ("render", "video"):
-        ok = g in my_groups
-        rows.append((f"gruppo {g}", ok, "ok" if ok else f"aggiungi l'utente: sudo usermod -aG {g} $USER"))
+    missing = [g for g in ("render", "video") if g not in my_groups]
+    if not missing:
+        rows.append(("gruppi", True, "render, video"))
+    elif kfd_ok and usable:
+        rows.append(("gruppi", True, f"non sei in {', '.join(missing)}, ma non serve: i dispositivi sono accessibili"))
+    else:
+        rows.append(("gruppi", False, f"manca {', '.join(missing)}: {fix}"))
     gtt = None
     for p in Path("/sys/class/drm").glob("card*/device/mem_info_gtt_total"):
         try:
