@@ -13,8 +13,9 @@ from textual import on, work
 from textual.app import App, ComposeResult
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
+from textual.theme import Theme
 from textual.widgets import (
-    Button, Checkbox, DataTable, Footer, Header, Input, Label, Select, Static,
+    Button, Checkbox, DataTable, Footer, Input, Label, Select, Static,
     TabbedContent, TabPane, TextArea,
 )
 
@@ -29,6 +30,36 @@ from .runtime import (
 SIZES = [256, 512, 768, 1024, 1280, 1536, 1792]
 
 
+# Palette (stessi valori del tema Textual, usati anche nei testi Rich)
+OK, WARN, ERR, MUTED, ACCENT = "#5EE6A0", "#F5C26B", "#F7768E", "#8B8499", "#A78BFA"
+
+IRIS_THEME = Theme(
+    name="iris",
+    primary="#A78BFA",
+    secondary="#7DD3FC",
+    accent="#F472B6",
+    foreground="#E6E1F0",
+    background="#100E17",
+    surface="#17141F",
+    panel="#211D2C",
+    success=OK,
+    warning=WARN,
+    error=ERR,
+    dark=True,
+)
+
+
+def kv(t: Text, key: str, value: str = "", style: str = "") -> None:
+    t.append(f"{key:<10}", style=MUTED)
+    t.append(value + "\n", style=style)
+
+
+def card(widget, title: str):
+    widget.border_title = title
+    widget.add_class("card")
+    return widget
+
+
 class Confirm(ModalScreen[bool]):
     def __init__(self, question: str, confirm_label: str = "Conferma") -> None:
         super().__init__()
@@ -36,10 +67,14 @@ class Confirm(ModalScreen[bool]):
         self.confirm_label = confirm_label
 
     def compose(self) -> ComposeResult:
-        with Grid(id="dialog"):
+        with Vertical(id="dialog"):
             yield Label(self.question, id="question")
-            yield Button(self.confirm_label, variant="error", id="yes")
-            yield Button("Annulla", variant="primary", id="no")
+            with Horizontal(id="dialog-buttons"):
+                yield Button("Annulla", id="no", compact=True)
+                yield Button(self.confirm_label, variant="error", id="yes", compact=True)
+
+    def on_mount(self) -> None:
+        self.query_one("#dialog").border_title = "Conferma"
 
     @on(Button.Pressed)
     def answer(self, event: Button.Pressed) -> None:
@@ -49,21 +84,59 @@ class Confirm(ModalScreen[bool]):
 class IrisCockpit(App):
     TITLE = "Iris Cockpit"
     SUB_TITLE = f"antirez/iris.c su AMD Strix Halo · cockpit v{__version__}"
+    HORIZONTAL_BREAKPOINTS = [(0, "-narrow"), (110, "-wide")]
     CSS = """
-    Screen { background: $surface; }
-    #status, #changelog, #cockpit, #host { padding: 0 1; border: round $primary 40%; margin: 0 0 1 0; height: auto; }
-    .buttons { height: auto; margin: 0 0 1 0; }
-    .buttons Button { margin: 0 1 0 0; }
-    .field { height: auto; margin: 0 0 1 0; }
-    .field Label { width: 22; padding: 1 1 0 0; }
-    .field Input, .field Select { width: 1fr; }
-    #prompt { height: 6; margin: 0 0 1 0; }
-    #models-table { height: auto; max-height: 14; margin: 0 0 1 0; }
-    #gen-log, #models-note, #settings-note { color: $text-muted; padding: 0 1; height: auto; }
-    Confirm { align: center middle; }
-    #dialog { grid-size: 2; grid-gutter: 1 2; grid-rows: 1fr 3; padding: 1 2;
-              width: 64; height: 13; border: thick $error 60%; background: $surface; }
-    #question { column-span: 2; height: 1fr; width: 1fr; content-align: center middle; }
+    Screen { background: $background; align-horizontal: center; }
+
+    /* Colonna centrale a larghezza massima */
+    #banner, TabbedContent { width: 100%; max-width: 118; }
+    TabbedContent { height: 1fr; }
+    #banner { height: 3; padding: 1 2 0 2; }
+    #brand { width: auto; color: $primary; text-style: bold; }
+    #tagline { width: 1fr; content-align: right middle; color: $text-muted; }
+
+    /* Schede centrate */
+    Tabs { margin: 0 1; }
+    TabPane { padding: 1 1 0 1; }
+
+    .card {
+        height: auto;
+        border: round $primary 35%;
+        border-title-color: $primary;
+        border-title-style: bold;
+        background: $surface;
+        padding: 0 2;
+        margin: 0 0 1 0;
+    }
+    .card:focus-within { border: round $primary 80%; }
+
+    #overview { grid-size: 2; grid-columns: 3fr 2fr; grid-gutter: 0 1; height: auto; }
+    .-narrow #overview { grid-size: 1; grid-columns: 1fr; }
+    #overview > .card { height: 100%; }
+
+    .info { height: auto; padding: 1 0 0 0; }
+    .buttons { height: auto; padding: 1 0; }
+    .buttons Button { margin: 0 2 0 0; }
+
+    .form { grid-size: 4; grid-columns: 13 1fr 13 1fr; grid-gutter: 1 2; grid-rows: auto; height: auto; padding: 1 0; }
+    .form.single { grid-size: 2; grid-columns: 18 1fr; }
+    .form Label { color: $text-muted; width: 100%; }
+    .form .wide { column-span: 3; }
+    .form Input, .form Select { width: 100%; }
+
+    #prompt { height: 6; background: $panel; padding: 0 1; }
+    #prompt-card { padding: 1 2; }
+    #models-table { height: auto; max-height: 12; margin: 1 0; background: $surface; }
+    #settings-actions, #settings-note { padding: 0 2; }
+    .note { color: $text-muted; height: auto; padding: 0 0 1 0; }
+    #gen-show { margin: 0; padding: 0; }
+
+    Confirm { align: center middle; background: $background 70%; }
+    #dialog { width: 64; height: auto; padding: 1 2; background: $surface;
+              border: round $error 70%; border-title-color: $error; border-title-style: bold; }
+    #question { width: 100%; padding: 0 0 1 0; }
+    #dialog-buttons { height: auto; align-horizontal: right; }
+    #dialog-buttons Button { margin: 0 0 0 2; }
     """
     BINDINGS = [
         ("q", "quit", "Esci"),
@@ -82,92 +155,106 @@ class IrisCockpit(App):
     # ------------------------------------------------------------------ UI --
 
     def compose(self) -> ComposeResult:
-        yield Header()
+        with Horizontal(id="banner"):
+            yield Static("✿  Iris Cockpit", id="brand")
+            yield Static(f"antirez/iris.c · AMD Strix Halo · v{__version__}", id="tagline")
         with TabbedContent(initial="tab-status"):
             with TabPane("Stato", id="tab-status"):
                 with VerticalScroll():
-                    yield Static("Controllo in corso...", id="status")
-                    with Horizontal(classes="buttons"):
-                        yield Button("Installa / aggiorna", id="build", variant="success")
-                        yield Button("Controlla aggiornamenti", id="check")
-                        yield Button("Ricostruisci da zero", id="rebuild", variant="warning")
-                    with Horizontal(classes="buttons"):
-                        yield Button("Verifica GPU", id="gpu")
-                        yield Button("Test rapido (4B)", id="selftest")
-                        yield Button("Apri shell", id="shell")
-                        yield Button("Elimina immagine", id="rmi", variant="error")
-                    yield Static("", id="changelog")
-                    yield Static("Cockpit: controllo aggiornamenti...", id="cockpit")
-                    with Horizontal(classes="buttons"):
-                        yield Button("Aggiorna cockpit", id="cockpit-update", variant="success")
-                    yield Static("", id="host")
+                    with Grid(id="overview"):
+                        with card(Vertical(), "Iris"):
+                            yield Static("Controllo in corso...", id="status", classes="info")
+                            with Horizontal(classes="buttons"):
+                                yield Button("Installa / aggiorna", id="build", variant="primary", compact=True)
+                                yield Button("Ricostruisci da zero", id="rebuild", variant="warning", compact=True)
+                        with card(Vertical(), "Cockpit"):
+                            yield Static("Controllo in corso...", id="cockpit", classes="info")
+                            with Horizontal(classes="buttons"):
+                                yield Button("Aggiorna cockpit", id="cockpit-update", variant="primary", compact=True)
+                    yield card(Static("", id="changelog"), "Novità di Iris")
+                    with card(Vertical(), "Strumenti"):
+                        with Horizontal(classes="buttons"):
+                            yield Button("Controlla aggiornamenti", id="check", compact=True)
+                            yield Button("Verifica GPU", id="gpu", compact=True)
+                            yield Button("Test rapido (4B)", id="selftest", compact=True)
+                            yield Button("Apri shell", id="shell", compact=True)
+                            yield Button("Elimina immagine", id="rmi", variant="error", compact=True)
+                    yield card(Static("", id="host", classes="info"), "Host")
             with TabPane("Modelli", id="tab-models"):
                 with VerticalScroll():
-                    yield DataTable(id="models-table", cursor_type="row", zebra_stripes=True)
-                    with Horizontal(classes="field"):
-                        yield Label("Token Hugging Face")
-                        yield Input(placeholder="Solo per i modelli con licenza da accettare; non viene salvato",
-                                    password=True, id="hf-token")
-                    with Horizontal(classes="buttons"):
-                        yield Button("Scarica", id="download", variant="success")
-                        yield Button("Elimina", id="delete-model", variant="error")
-                        yield Button("Aggiorna elenco", id="refresh-models")
-                    yield Static("", id="models-note")
+                    with card(Vertical(), "Modelli"):
+                        yield DataTable(id="models-table", cursor_type="row", zebra_stripes=True)
+                        yield Static("", id="models-note", classes="note")
+                    with card(Vertical(), "Download"):
+                        with Grid(classes="form single"):
+                            yield Label("Token Hugging Face")
+                            yield Input(placeholder="solo per i modelli con licenza; non viene salvato",
+                                        password=True, id="hf-token", compact=True)
+                        with Horizontal(classes="buttons"):
+                            yield Button("Scarica selezionato", id="download", variant="primary", compact=True)
+                            yield Button("Elimina selezionato", id="delete-model", variant="error", compact=True)
+                            yield Button("Aggiorna elenco", id="refresh-models", compact=True)
             with TabPane("Genera", id="tab-generate"):
                 with VerticalScroll():
-                    with Horizontal(classes="field"):
-                        yield Label("Modello")
-                        yield Select([], id="gen-model", prompt="Scarica prima un modello")
-                    yield TextArea(id="prompt")
-                    with Horizontal(classes="field"):
-                        yield Label("Larghezza")
-                        yield Select([(str(s), s) for s in SIZES], value=1024, id="gen-w", allow_blank=False)
-                        yield Label("Altezza")
-                        yield Select([(str(s), s) for s in SIZES], value=1024, id="gen-h", allow_blank=False)
-                    with Horizontal(classes="field"):
-                        yield Label("Step")
-                        yield Input(placeholder="vuoto = default del modello", id="gen-steps", type="integer")
-                        yield Label("Seed")
-                        yield Input(placeholder="vuoto = casuale", id="gen-seed", type="integer")
-                    with Horizontal(classes="field"):
-                        yield Label("Riferimenti")
-                        yield Input(placeholder="percorsi separati da spazio (img2img / multi-reference)", id="gen-refs")
-                    yield Checkbox("Mostra l'immagine nel terminale (Kitty, Ghostty, WezTerm, iTerm2, Konsole)",
-                                   id="gen-show")
-                    with Horizontal(classes="buttons"):
-                        yield Button("Genera", id="generate", variant="success")
-                        yield Button("Sessione interattiva", id="interactive")
-                    yield Static("", id="gen-log")
+                    with card(Vertical(id="prompt-card"), "Prompt"):
+                        yield TextArea(id="prompt", compact=True)
+                    with card(Vertical(), "Parametri"):
+                        with Grid(classes="form"):
+                            yield Label("Modello")
+                            yield Select([], id="gen-model", prompt="Scarica prima un modello",
+                                         classes="wide", compact=True)
+                            yield Label("Larghezza")
+                            yield Select([(str(s), s) for s in SIZES], value=1024, id="gen-w",
+                                         allow_blank=False, compact=True)
+                            yield Label("Altezza")
+                            yield Select([(str(s), s) for s in SIZES], value=1024, id="gen-h",
+                                         allow_blank=False, compact=True)
+                            yield Label("Step")
+                            yield Input(placeholder="default del modello", id="gen-steps",
+                                        type="integer", compact=True)
+                            yield Label("Seed")
+                            yield Input(placeholder="casuale", id="gen-seed", type="integer", compact=True)
+                            yield Label("Riferimenti")
+                            yield Input(placeholder="immagini per img2img / multi-reference, separate da spazio",
+                                        id="gen-refs", classes="wide", compact=True)
+                        yield Checkbox("Mostra l'immagine nel terminale (Kitty, Ghostty, WezTerm, iTerm2, Konsole)",
+                                       id="gen-show", compact=True)
+                        with Horizontal(classes="buttons"):
+                            yield Button("Genera", id="generate", variant="primary", compact=True)
+                            yield Button("Sessione interattiva", id="interactive", compact=True)
+                        yield Static("", id="gen-log", classes="note")
             with TabPane("Impostazioni", id="tab-settings"):
                 with VerticalScroll():
-                    for key, label in [
-                        ("models_dir", "Cartella modelli"),
-                        ("output_dir", "Cartella immagini"),
-                        ("image", "Nome immagine"),
-                        ("iris_repo", "Repository Iris"),
-                        ("iris_ref", "Branch"),
-                        ("gpu_arch", "Architettura GPU"),
-                        ("fedora_version", "Versione Fedora"),
-                        ("engine", "Motore container"),
+                    for title, fields in [
+                        ("Cartelle", [("models_dir", "Modelli"), ("output_dir", "Immagini")]),
+                        ("Build", [("image", "Nome immagine"), ("iris_repo", "Repository Iris"),
+                                   ("iris_ref", "Branch"), ("gpu_arch", "Architettura GPU"),
+                                   ("fedora_version", "Versione Fedora"), ("engine", "Motore container")]),
                     ]:
-                        with Horizontal(classes="field"):
-                            yield Label(label)
-                            yield Input(value=str(getattr(self.cfg, key)), id=f"set-{key}")
-                    with Horizontal(classes="field"):
-                        yield Label("Accesso GPU")
-                        yield Select([("keep-groups (podman rootless)", "keep-groups"),
-                                      ("video + render", "video-render")],
-                                     value=self.cfg.group_mode, id="set-group_mode", allow_blank=False)
-                    with Horizontal(classes="buttons"):
-                        yield Button("Salva impostazioni", id="save-settings", variant="success")
-                    yield Static("", id="settings-note")
+                        with card(Vertical(), title):
+                            with Grid(classes="form single"):
+                                for key, label in fields:
+                                    yield Label(label)
+                                    yield Input(value=str(getattr(self.cfg, key)), id=f"set-{key}", compact=True)
+                                if title == "Build":
+                                    yield Label("Accesso GPU")
+                                    yield Select([("keep-groups (podman rootless)", "keep-groups"),
+                                                  ("video + render", "video-render")],
+                                                 value=self.cfg.group_mode, id="set-group_mode",
+                                                 allow_blank=False, compact=True)
+                    with Horizontal(classes="buttons", id="settings-actions"):
+                        yield Button("Salva impostazioni", id="save-settings", variant="primary", compact=True)
+                    yield Static("", id="settings-note", classes="note")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.register_theme(IRIS_THEME)
+        self.theme = "iris"
         table = self.query_one("#models-table", DataTable)
         table.add_columns("Modello", "Stato", "Dimensione", "Licenza", "Token")
         self.query_one("#prompt", TextArea).text = "A picture of a lighthouse at dawn, ASA 400 film"
         self.query_one("#cockpit-update", Button).display = False
+        self.query_one("#changelog").display = False
         self.refresh_models()
         self.render_host()
         self.action_refresh()
@@ -193,26 +280,28 @@ class IrisCockpit(App):
     def _set_cockpit(self, info: CockpitInfo) -> None:
         self.cockpit = info
         t = Text()
-        t.append("Cockpit   ", style="dim")
-        t.append(f"v{info.version}  {info.commit[:7] or 'commit sconosciuto'}\n")
-        t.append("GitHub    ", style="dim")
+        kv(t, "Versione", f"v{info.version}")
+        kv(t, "Commit", info.commit[:7] or "sconosciuto")
         r = info.remote
         if not r.ok:
-            t.append(f"non raggiungibile ({r.error})", style="red")
+            kv(t, "GitHub", f"non raggiungibile ({r.error})", ERR)
         else:
-            t.append(f"{r.sha[:7]}  {r.date}  {r.message}\n")
+            kv(t, "GitHub", f"{r.sha[:7]}  {r.date}")
             if not info.update_available:
-                t.append("Il cockpit è aggiornato.", style="bold green")
+                t.append("● Aggiornato", style=f"bold {OK}")
             else:
                 n = len(r.new_commits)
-                t.append(f"Nuova versione del cockpit{f' ({n} commit)' if n else ''}: "
-                         "premi “Aggiorna cockpit”.", style="bold yellow")
-                for line in r.new_commits[:10]:
-                    t.append("\n  " + line, style="dim")
+                t.append(f"● Nuova versione{f' ({n} commit)' if n else ''}", style=f"bold {WARN}")
+                for line in r.new_commits[:6]:
+                    t.append("\n" + self._short(line.split("  ", 2)[-1], 40), style=MUTED)
         self.query_one("#cockpit", Static).update(t)
         self.query_one("#cockpit-update", Button).display = info.update_available
         if info.update_available:
             self.notify("È disponibile una nuova versione del cockpit.", timeout=6)
+
+    @staticmethod
+    def _short(text: str, n: int = 50) -> str:
+        return text if len(text) <= n else text[: n - 1] + "…"
 
     def _set_status(self, image: ImageInfo, remote: RemoteInfo | None) -> None:
         self.image = image
@@ -220,47 +309,45 @@ class IrisCockpit(App):
             self.remote = remote
         t = Text()
         if not engine_available(self.cfg):
-            t.append(f"{self.cfg.engine} non trovato. ", style="bold red")
-            t.append("Installalo (es. sudo dnf install podman) e riapri il cockpit.")
+            t.append(f"● {self.cfg.engine} non trovato\n", style=f"bold {ERR}")
+            t.append("Installalo (es. sudo dnf install podman) e riapri il cockpit.", style=MUTED)
             self.query_one("#status", Static).update(t)
             return
-        if not image.present:
-            t.append("Iris non è ancora installato.\n", style="bold yellow")
-            t.append("Premi “Installa / aggiorna”: il primo build scarica Fedora e ROCm (alcuni GB) "
-                     "e compila Iris per ", style="")
-            t.append(self.cfg.gpu_arch, style="bold")
-            t.append(".")
+        if image.present:
+            kv(t, "Immagine", self.cfg.image)
+            kv(t, "Creata", f"{image.created}  ·  Fedora {image.fedora}  ·  {image.gpu_arch}")
+            kv(t, "Commit", f"{image.commit[:7] or '?'}  ({image.ref})")
         else:
-            t.append("Immagine  ", style="dim")
-            t.append(f"{self.cfg.image}\n")
-            t.append("Creata    ", style="dim")
-            t.append(f"{image.created}   Fedora {image.fedora}   {image.gpu_arch}\n")
-            t.append("Iris      ", style="dim")
-            t.append(f"{image.commit[:7] or '?'}  ({image.ref})\n")
-        t.append("GitHub    ", style="dim")
+            kv(t, "Immagine", "non ancora costruita", WARN)
         if remote is None and not self.remote.ok:
-            t.append("controllo in corso...")
+            kv(t, "GitHub", "controllo in corso...", MUTED)
         elif self.remote.ok:
-            t.append(f"{self.remote.sha[:7]}  {self.remote.date}  {self.remote.message}\n")
-            if image.present:
-                if image.commit == self.remote.sha or self.remote.status in ("behind", "identical"):
-                    t.append("Sei aggiornato all'ultimo commit.", style="bold green")
-                elif image.commit in ("", "unknown"):
-                    t.append("Versione installata sconosciuta: aggiorna per allinearti.", style="bold yellow")
-                else:
-                    n = len(self.remote.new_commits)
-                    t.append(f"Aggiornamento disponibile{f' ({n} commit)' if n else ''}: "
-                             "premi “Installa / aggiorna”.", style="bold yellow")
+            kv(t, "GitHub", f"{self.remote.sha[:7]}  {self.remote.date}")
+            kv(t, "", self._short(self.remote.message), MUTED)
         else:
-            t.append(f"non raggiungibile ({self.remote.error})", style="red")
+            kv(t, "GitHub", f"non raggiungibile ({self.remote.error})", ERR)
+        if not image.present:
+            t.append("● Da installare\n", style=f"bold {WARN}")
+            t.append(f"Il primo build scarica Fedora e ROCm (alcuni GB) e compila Iris per {self.cfg.gpu_arch}.",
+                     style=MUTED)
+        elif self.remote.ok:
+            if image.commit == self.remote.sha or self.remote.status in ("behind", "identical"):
+                t.append("● Aggiornato all'ultimo commit", style=f"bold {OK}")
+            elif image.commit in ("", "unknown"):
+                t.append("● Versione sconosciuta: aggiorna per allinearti", style=f"bold {WARN}")
+            else:
+                n = len(self.remote.new_commits)
+                t.append(f"● Aggiornamento disponibile{f' ({n} commit)' if n else ''}", style=f"bold {WARN}")
         self.query_one("#status", Static).update(t)
 
         cl = self.query_one("#changelog", Static)
         if self.remote.new_commits:
             c = Text()
-            c.append("Novità rispetto alla versione installata\n", style="bold")
             for line in self.remote.new_commits[:25]:
-                c.append(line + "\n")
+                sha, date, msg = (line.split("  ", 2) + ["", ""])[:3]
+                c.append(f"{sha} ", style=ACCENT)
+                c.append(f"{date}  ", style=MUTED)
+                c.append(msg + "\n")
             cl.update(c)
             cl.display = True
         else:
@@ -268,12 +355,13 @@ class IrisCockpit(App):
 
     def render_host(self) -> None:
         t = Text()
-        t.append("Host\n", style="bold")
-        for name, ok, detail in host_report():
-            t.append("  ✓ " if ok else "  ✗ ", style="green" if ok else "red")
-            t.append(f"{name:<14}", style="dim")
-            t.append(detail + "\n")
+        rows = host_report()
+        for i, (name, ok, detail) in enumerate(rows):
+            t.append("✓ " if ok else "✗ ", style=f"bold {OK if ok else ERR}")
+            t.append(f"{name:<13}", style=MUTED)
+            t.append(detail + ("\n" if i < len(rows) - 1 else ""))
         self.query_one("#host", Static).update(t)
+
 
     # ----------------------------------------------------- run helpers --
 
@@ -403,12 +491,12 @@ class IrisCockpit(App):
         table.clear()
         for spec in MODELS:
             status = model_status(self.cfg, spec)
-            style = {"scaricato": "green", "incompleto": "yellow", "assente": "dim"}[status]
+            style = {"scaricato": OK, "incompleto": WARN, "assente": MUTED}[status]
             size = f"~{spec.size_gb} GB"
             if status != "assente":
                 size = f"{dir_size_gb(self.cfg.models_path / spec.directory):.1f} / ~{spec.size_gb} GB"
-            table.add_row(spec.name, Text(status, style=style), size, spec.license,
-                          "richiesto" if spec.gated else "", key=spec.key)
+            table.add_row(spec.name, Text("● " + status, style=style), size, spec.license,
+                          Text("richiesto", style=WARN) if spec.gated else "", key=spec.key)
         if cursor is not None and 0 <= cursor < len(MODELS):
             table.move_cursor(row=cursor)
         try:
@@ -417,9 +505,9 @@ class IrisCockpit(App):
         except OSError:
             free = 0
         self.query_one("#models-note", Static).update(
-            f"Cartella: {self.cfg.models_path}   Spazio libero: {free / 1024**3:.0f} GB\n"
-            "Per i modelli con token: accetta prima la licenza sulla pagina Hugging Face del modello. "
-            "Se un download si interrompe, premi di nuovo Scarica: riparte da capo.")
+            f"{self.cfg.models_path}  ·  {free / 1024**3:.0f} GB liberi\n"
+            "Per i modelli con token accetta prima la licenza sulla loro pagina Hugging Face. "
+            "Un download interrotto riparte da capo.")
         sel = self.query_one("#gen-model", Select)
         current = sel.value
         options = [(s.name, s.directory) for s in MODELS if model_status(self.cfg, s) == "scaricato"]
