@@ -1,53 +1,81 @@
-# Iris Cockpit per Strix Halo
+# Iris Cockpit for Strix Halo
 
-Un container Podman con [Iris](https://github.com/antirez/iris.c) di antirez già compilato per la GPU di Strix Halo (Radeon 8060S, `gfx1151`), e una TUI per installarlo, aggiornarlo, scaricare i modelli e generare immagini. L'impostazione ricalca [AI Toolbox Cockpit](https://github.com/kyuz0/ai-toolbox-cockpit) di kyuz0: Textual, comandi `podman run` espliciti, modelli su cartelle dell'host che sopravvivono agli aggiornamenti.
+A Podman container with antirez's [Iris](https://github.com/antirez/iris.c) prebuilt for the Strix Halo GPU (Radeon 8060S, `gfx1151`), plus a TUI to install it, update it, download models and generate images. The approach follows kyuz0's [AI Toolbox Cockpit](https://github.com/kyuz0/ai-toolbox-cockpit): Textual, explicit `podman run` commands, and models kept in host folders that survive updates.
 
-## Cosa serve sull'host
+## Host requirements
 
-Una distro con kernel recente e driver `amdgpu` attivo (deve esistere `/dev/kfd`), Podman, Python 3.10+ e pipx. L'utente deve poter aprire `/dev/kfd` e `/dev/dri/renderD*`: su molte distro (Fedora compresa) sono già accessibili a tutti, altrimenti aggiungilo ai gruppi `render` e `video`. La scheda Stato lo verifica:
+A distro with a recent kernel and the `amdgpu` driver loaded (`/dev/kfd` must exist), Podman, Python 3.10+ and pipx. Your user must be able to open `/dev/kfd` and `/dev/dri/renderD*`. On many distros, Fedora included, these are already accessible to everyone; otherwise add yourself to the `render` and `video` groups. The Status tab checks this for you:
 
 ```bash
-sudo usermod -aG render,video "$USER"   # poi logout/login
+sudo usermod -aG render,video "$USER"   # then log out and back in
 ```
 
-ROCm **non** va installato sull'host: sta tutto nel container (Fedora 44 con i pacchetti ROCm della distro).
+You do **not** need ROCm on the host: everything lives in the container (Fedora 44 with the distro's ROCm packages).
 
-## Installazione
+## Installation
 
-Direttamente da GitHub:
+Straight from GitHub:
 
 ```bash
 pipx install git+https://github.com/olac-acul/iris-strix-halo.git
 iris-cockpit
 ```
 
-In alternativa, da un clone locale:
+Or from a local clone:
 
 ```bash
 git clone https://github.com/olac-acul/iris-strix-halo.git
 pipx install ./iris-strix-halo
 ```
 
-Poi il cockpit si aggiorna da solo dalla TUI (vedi *Aggiornamenti del cockpit*).
+After that the cockpit updates itself from the TUI (see *Cockpit updates*).
 
-Al primo avvio la scheda **Stato** mostra cosa manca sull'host. Premi **Installa / aggiorna**: il primo build scarica Fedora e ROCm (alcuni GB) e compila Iris. Va fatto sulla macchina Strix Halo stessa, perché il Makefile di Iris usa `-march=native` per la parte CPU.
+On first start the **Status** tab shows what is missing on the host. Press **Install / update**: the first build downloads Fedora and ROCm (a few GB) and compiles Iris. Run it on the Strix Halo machine itself, because Iris's Makefile uses `-march=native` for the CPU code.
 
-Poi nella scheda **Modelli** scarica *FLUX.2 Klein 4B distillato* (non serve token), torna su **Stato** e lancia **Verifica GPU** e **Test rapido**: il test confronta l'output con le immagini di riferimento del repository.
+Then download *FLUX.2 Klein 4B distilled* from the **Models** tab (no token needed), go back to **Status** and run **Check GPU** and **Quick test**. The test compares the output against the reference images in Iris's repository.
 
-## Come funzionano gli aggiornamenti
+## Models
 
-All'avvio (e con il tasto `u`) il cockpit confronta il commit di Iris dentro l'immagine con l'ultimo commit del branch su GitHub e, se sei indietro, elenca le novità. Ci sono due livelli di aggiornamento:
+| Model | Size | Token |
+|---|---|---|
+| FLUX.2 Klein 4B distilled / base | ~16 GB | no |
+| Z-Image-Turbo 6B | ~12 GB | no |
+| FLUX.2 Klein 9B distilled / base | ~30 GB | yes |
+| FLUX.3 Image Klein distilled / base | ~20 GB | yes |
 
-- **Installa / aggiorna** ricompila solo Iris all'ultimo commit. Lo strato con Fedora e ROCm resta in cache, quindi ci mette un paio di minuti.
-- **Ricostruisci da zero** riscarica l'immagine Fedora e i pacchetti ROCm più recenti, senza cache. Usalo ogni tanto, o quando Fedora pubblica un aggiornamento di ROCm.
+Models marked "yes" are gated on Hugging Face. Accept the license on the model's page, then create a read token at huggingface.co/settings/tokens. Paste the token in the Models tab when downloading; it is never saved. Alternatively, export `HF_TOKEN` before starting the cockpit.
 
-Dopo ogni build riuscito le immagini vecchie vengono rimosse. I modelli non vengono mai toccati.
+## Generating images
 
-### Aggiornamenti del cockpit
+The **Generate** tab runs a single generation with the chosen model, size, steps, seed and optional reference images (img2img / multi-reference). **Interactive session** opens Iris's REPL, which keeps the model loaded between prompts. The REPL starts at the width and height selected in the tab. Inside it, `!size WxH` changes the size, `!help` lists the commands and `!quit` exits.
 
-Allo stesso modo il cockpit controlla se su GitHub c'è una sua versione più recente (sezione *Cockpit* nella scheda Stato, con l'elenco delle novità). Se c'è, compare il pulsante **Aggiorna cockpit**: reinstalla il pacchetto al commit esatto nello stesso ambiente pipx (con pip o uv, a seconda di come pipx l'ha creato) e riavvia la TUI. Non serve `pipx --force` né `pipx reinstall`, che con il backend uv di pipx non funzionano.
+### Showing images in the terminal
 
-Se il cockpit è troppo vecchio per avere quel pulsante (versioni prima della 0.2.0), aggiornalo a mano una volta:
+With *Show the image in the terminal* ticked, Iris draws the result directly in the terminal. This needs a terminal that supports the Kitty or iTerm2 graphics protocol:
+
+- **Kitty and Ghostty** work locally and over SSH, because Iris recognizes them from `TERM`. With Kitty you can use `kitten ssh` if the server lacks Kitty's terminfo.
+- **WezTerm, iTerm2 and Konsole** work locally. Over SSH their environment variables are not forwarded, so Iris does not recognize them.
+- **Alacritty, GNOME Terminal/Ptyxis** and other terminals without these protocols cannot show images.
+- **tmux and screen** block the graphics escape codes.
+
+If nothing appears, the image is still saved in `~/iris/output`.
+
+## How updates work
+
+On start (and with the `u` key) the cockpit compares the Iris commit inside the image with the latest commit of the branch on GitHub and, if you are behind, lists what's new. There are two levels of update:
+
+- **Install / update** recompiles only Iris at the latest commit. The Fedora + ROCm layer stays cached, so it takes a couple of minutes.
+- **Rebuild from scratch** downloads the latest Fedora image and ROCm packages again, without cache. Use it now and then, or when Fedora ships a ROCm update.
+
+After each successful build, old images are removed. Models are never touched.
+
+The status also says **Rebuild needed** when a newer cockpit adds something to the image (for example the interactive session size). In that case press **Install / update** once.
+
+### Cockpit updates
+
+The cockpit also checks GitHub for a newer version of itself (the *Cockpit* card in the Status tab). It compares version numbers fetched from raw.githubusercontent.com, so it keeps working when the GitHub API rate limit (60 requests/hour without login) is exhausted. When a new version exists, an **Update cockpit** button appears. It reinstalls the package at that exact commit into the same pipx environment (with pip or uv, depending on how pipx created it) and restarts the TUI. You don't need `pipx --force` or `pipx reinstall`, which fail with pipx's uv backend.
+
+Cockpit versions older than 0.3.1 cannot see updates reliably. Update those manually once:
 
 ```bash
 pipx uninstall iris-cockpit
@@ -55,20 +83,24 @@ pipx install git+https://github.com/olac-acul/iris-strix-halo.git
 iris-cockpit --version
 ```
 
-## Dove finiscono i file
+## Where files go
 
-| Cosa | Host (default) | Nel container |
+| What | Host (default) | In the container |
 |---|---|---|
-| Modelli | `~/iris/models` | `/models` |
-| Immagini generate | `~/iris/output` | `/output` |
-| Sessioni interattive | `~/iris/output/interactive` | `/tmp` |
-| Impostazioni | `~/.config/iris-cockpit/config.json` | |
+| Models | `~/iris/models` | `/models` |
+| Generated images | `~/iris/output` | `/output` |
+| Interactive sessions | `~/iris/output/interactive` | `/tmp` |
+| Settings | `~/.config/iris-cockpit/config.json` | |
 
-Le cartelle si cambiano dalla scheda **Impostazioni**. Il token Hugging Face per i modelli con licenza (9B, FLUX.3) va inserito al momento del download e non viene salvato; in alternativa esporta `HF_TOKEN` prima di avviare il cockpit.
+Folders can be changed in the **Settings** tab.
 
-## Usarlo senza TUI
+## Changes to Iris
 
-Il cockpit mostra sempre il comando che esegue. Per esempio, una generazione equivale a:
+The image applies a small patch to Iris before compiling ([`patch-iris.sh`](iris_cockpit/assets/patch-iris.sh)): the interactive session reads its starting size from `IRIS_CLI_WIDTH` / `IRIS_CLI_HEIGHT`, while upstream always starts at 256x256. If Iris's code changes and the patch no longer applies, the build still succeeds and the session simply starts at 256x256.
+
+## Using it without the TUI
+
+The cockpit always prints the command it runs. For example, a generation is equivalent to:
 
 ```bash
 podman run --rm -it --device /dev/kfd --device /dev/dri \
@@ -76,15 +108,15 @@ podman run --rm -it --device /dev/kfd --device /dev/dri \
   --group-add keep-groups \
   -v ~/iris/models:/models -v ~/iris/output:/output \
   localhost/iris-strix-halo:latest \
-  iris -d /models/flux-klein-4b -p "a lighthouse at dawn" -W 1024 -H 1024 -o /output/faro.png
+  iris -d /models/flux-klein-4b -p "a lighthouse at dawn" -W 1024 -H 1024 -o /output/lighthouse.png
 ```
 
-Dentro il container ci sono anche `iris-download <modello>` (scarica in `/models`) e `iris-selftest`.
+The container also provides `iris-download <model>` (downloads into `/models`) and `iris-selftest`.
 
-## Se qualcosa non va
+## Troubleshooting
 
-**La GPU non viene vista nel container.** Con Podman rootless `--group-add keep-groups` richiede il runtime `crun` (default su Fedora). Se usi `runc` o Podman da root, passa ad *Accesso GPU: video + render* in Impostazioni.
+**The GPU is not visible in the container.** With rootless Podman, `--group-add keep-groups` requires the `crun` runtime (the default on Fedora). If you use `runc` or rootful Podman, switch *GPU access* to *video + render* in Settings.
 
-**Il build fallisce sui pacchetti ROCm.** I nomi dei pacchetti cambiano tra versioni di Fedora: prova a impostare *Versione Fedora* a quella precedente o successiva e ricostruisci da zero.
+**The build fails on ROCm packages.** Package names change between Fedora releases: try setting *Fedora version* to the previous or next release and rebuild from scratch.
 
-**I modelli grandi vanno in out of memory.** Su Strix Halo la GPU usa la memoria GTT, il cui limite dipende dal kernel. La scheda Stato mostra quanta ne vede il driver; AMD documenta lo strumento `amd-ttm` (`pipx install amd-debug-tools`) per alzarlo.
+**Large models run out of memory.** On Strix Halo the GPU uses GTT memory, whose limit depends on the kernel. The Status tab shows how much the driver sees; AMD documents the `amd-ttm` tool (`pipx install amd-debug-tools`) to raise it.

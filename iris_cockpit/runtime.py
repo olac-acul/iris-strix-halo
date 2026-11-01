@@ -17,6 +17,13 @@ from pathlib import Path
 
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "iris-cockpit" / "config.json"
 
+# Revision of what the cockpit puts into the image on top of upstream Iris
+# (Containerfile + patch-iris.sh). Bump it whenever those change, so the
+# cockpit can tell the user to rebuild an older image.
+#   1: initial image
+#   2: patch cli-size (interactive session starts at IRIS_CLI_WIDTH x IRIS_CLI_HEIGHT)
+IMAGE_REV = "2"
+
 
 # --------------------------------------------------------------------------- #
 # Configuration
@@ -31,7 +38,7 @@ class Config:
     fedora_version: str = "44"
     models_dir: str = str(Path.home() / "iris" / "models")
     output_dir: str = str(Path.home() / "iris" / "output")
-    # "keep-groups" (podman rootless, consigliato) oppure "video-render"
+    # "keep-groups" (rootless podman, recommended) or "video-render"
     group_mode: str = "keep-groups"
     engine: str = "podman"
 
@@ -65,46 +72,47 @@ class Config:
 
 @dataclass(frozen=True)
 class ModelSpec:
-    key: str          # argomento di download_model.sh
-    directory: str    # cartella creata dallo script
+    key: str          # download_model.sh argument
+    directory: str    # directory created by the script
     name: str
     size_gb: int
-    gated: bool
+    gated: bool       # Hugging Face requires accepting the license (needs a token)
     license: str
     hf_repo: str
 
 
 MODELS: list[ModelSpec] = [
-    ModelSpec("4b", "flux-klein-4b", "FLUX.2 Klein 4B distillato", 16, False, "Apache 2.0",
+    ModelSpec("4b", "flux-klein-4b", "FLUX.2 Klein 4B distilled", 16, False, "Apache 2.0",
               "black-forest-labs/FLUX.2-klein-4B"),
     ModelSpec("4b-base", "flux-klein-4b-base", "FLUX.2 Klein 4B base", 16, False, "Apache 2.0",
               "black-forest-labs/FLUX.2-klein-base-4B"),
-    ModelSpec("9b", "flux-klein-9b", "FLUX.2 Klein 9B distillato", 30, True, "Non commerciale",
+    ModelSpec("9b", "flux-klein-9b", "FLUX.2 Klein 9B distilled", 30, True, "Non-commercial",
               "black-forest-labs/FLUX.2-klein-9B"),
-    ModelSpec("9b-base", "flux-klein-9b-base", "FLUX.2 Klein 9B base", 30, True, "Non commerciale",
+    ModelSpec("9b-base", "flux-klein-9b-base", "FLUX.2 Klein 9B base", 30, True, "Non-commercial",
               "black-forest-labs/FLUX.2-klein-base-9B"),
     ModelSpec("zimage-turbo", "zimage-turbo", "Z-Image-Turbo 6B", 12, False, "Apache 2.0",
               "Tongyi-MAI/Z-Image-Turbo"),
-    ModelSpec("flux3", "flux-3-klein", "FLUX.3 Image Klein distillato", 20, True, "FLUX Kommunity",
+    ModelSpec("flux3", "flux-3-klein", "FLUX.3 Image Klein distilled", 20, True, "FLUX Kommunity",
               "black-forest-labs/flux-3-image-klein"),
     ModelSpec("flux3-base", "flux-3-klein-base", "FLUX.3 Image Klein base", 20, True, "FLUX Kommunity",
               "black-forest-labs/flux-3-image-klein-base"),
 ]
 
+DOWNLOADED, INCOMPLETE, MISSING = "downloaded", "incomplete", "missing"
+
 
 def model_status(cfg: Config, spec: ModelSpec) -> str:
-    """'scaricato', 'incompleto' o 'assente'."""
+    """DOWNLOADED, INCOMPLETE or MISSING."""
     root = cfg.models_path / spec.directory
     if not root.exists():
-        return "assente"
-    needed = ["transformer", "vae", "text_encoder"]
-    for sub in needed:
+        return MISSING
+    for sub in ("transformer", "vae", "text_encoder"):
         d = root / sub
         if not d.is_dir() or not any(d.glob("*.safetensors")):
-            return "incompleto"
+            return INCOMPLETE
     if not ((root / "model_index.json").exists() or (root / "modular_model_index.json").exists()):
-        return "incompleto"
-    return "scaricato"
+        return INCOMPLETE
+    return DOWNLOADED
 
 
 def dir_size_gb(path: Path) -> float:
@@ -138,6 +146,12 @@ class ImageInfo:
     created: str = ""
     gpu_arch: str = ""
     fedora: str = ""
+    cockpit_rev: str = ""   # IMAGE_REV the image was built with ("" = before revisions existed)
+
+    @property
+    def outdated(self) -> bool:
+        """Built by an older cockpit: missing features until rebuilt."""
+        return self.present and self.cockpit_rev != IMAGE_REV
 
 
 def inspect_image(cfg: Config) -> ImageInfo:
@@ -164,6 +178,7 @@ def inspect_image(cfg: Config) -> ImageInfo:
         created=(data.get("Created") or "")[:19].replace("T", " "),
         gpu_arch=labels.get("io.iris.gpu_arch", ""),
         fedora=labels.get("io.iris.fedora", ""),
+        cockpit_rev=labels.get("io.iris.cockpit_rev", ""),
     )
 
 
@@ -193,11 +208,11 @@ def run_cmd(cfg: Config, inner: list[str], *, extra_mounts: list[str] | None = N
     cmd += ["-v", f"{cfg.models_path}:/models", "-v", f"{cfg.output_path}:/output", "-w", workdir]
     for m in extra_mounts or []:
         cmd += ["-v", m]
-    # Le variabili sensibili passano per nome: il valore resta solo nell'ambiente
-    # del processo, non compare nella riga di comando mostrata.
+    # Variables are passed by name: values (e.g. tokens) stay in the process
+    # environment and never appear in the command line shown to the user.
     for k in (env or {}):
         cmd += ["-e", k]
-    # Passa il tipo di terminale per --show (Kitty/Ghostty/WezTerm/iTerm2)
+    # Terminal type, so that --show can pick Kitty/Ghostty/WezTerm/iTerm2/Konsole
     for k in ("TERM", "TERM_PROGRAM", "KITTY_WINDOW_ID", "GHOSTTY_RESOURCES_DIR", "WEZTERM_PANE", "KONSOLE_VERSION"):
         if os.environ.get(k):
             cmd += ["-e", k]
@@ -212,7 +227,8 @@ def build_cmd(cfg: Config, commit: str, fresh: bool) -> list[str]:
            "--build-arg", f"IRIS_REPO={cfg.iris_repo}",
            "--build-arg", f"IRIS_REF={cfg.iris_ref}",
            "--build-arg", f"IRIS_COMMIT={commit or 'unknown'}",
-           "--build-arg", f"GPU_ARCH={cfg.gpu_arch}"]
+           "--build-arg", f"GPU_ARCH={cfg.gpu_arch}",
+           "--build-arg", f"COCKPIT_REV={IMAGE_REV}"]
     if fresh:
         cmd += ["--pull=always", "--no-cache"]
     cmd.append(str(containerfile_path().parent))
@@ -232,7 +248,7 @@ def pretty(cmd: list[str]) -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Upstream updates (GitHub API, con fallback a git ls-remote)
+# Upstream updates (GitHub API, falling back to git ls-remote)
 # --------------------------------------------------------------------------- #
 
 @dataclass
@@ -242,9 +258,9 @@ class RemoteInfo:
     date: str = ""
     message: str = ""
     error: str = ""
-    # Esito del confronto installato...remoto: "ahead" = il remoto è più nuovo.
-    # L'API senza login può restituire per ~1 minuto un commit vecchio: senza
-    # questo controllo si "aggiornerebbe" a una versione precedente.
+    # Result of comparing installed...remote: "ahead" = remote is newer.
+    # The unauthenticated API can return a stale commit for about a minute:
+    # without this check we could "update" to an older version.
     status: str = ""
     new_commits: list[str] = field(default_factory=list)
 
@@ -283,14 +299,14 @@ def check_remote(cfg: Config, installed_sha: str = "") -> RemoteInfo:
                         f"{c['commit']['message'].splitlines()[0]}"
                         for c in reversed(cmp.get("commits", []))
                     ]
-                except Exception:  # noqa: BLE001 - il changelog è facoltativo
+                except Exception:  # noqa: BLE001 - the changelog is optional
                     pass
             return info
         except Exception as e:  # noqa: BLE001
             api_error = str(e)
     else:
-        api_error = "repository non su GitHub"
-    # Fallback: git ls-remote
+        api_error = "repository is not on GitHub"
+    # Fallback: git ls-remote (not subject to the API rate limit)
     if shutil.which("git"):
         try:
             out = subprocess.run(["git", "ls-remote", cfg.iris_repo, f"refs/heads/{cfg.iris_ref}"],
@@ -303,7 +319,7 @@ def check_remote(cfg: Config, installed_sha: str = "") -> RemoteInfo:
 
 
 # --------------------------------------------------------------------------- #
-# Aggiornamento del cockpit stesso
+# Updating the cockpit itself
 # --------------------------------------------------------------------------- #
 
 COCKPIT_REPO = "https://github.com/olac-acul/iris-strix-halo.git"
@@ -313,25 +329,25 @@ COCKPIT_REF = "main"
 @dataclass
 class CockpitInfo:
     version: str
-    commit: str        # commit installato, "" se sconosciuto (es. install da cartella locale)
+    commit: str        # installed commit, "" if unknown (e.g. installed from a local folder)
     remote: RemoteInfo
-    remote_version: str = ""   # __version__ letto dal commit remoto
+    remote_version: str = ""   # __version__ read from the remote commit
 
     @property
     def update_available(self) -> bool:
         r = self.remote
         if not (r.ok and r.sha) or self.commit == r.sha:
             return False
-        # Segnale principale: numero di versione più alto su GitHub. Non dipende
-        # dall'API (limite di 60 richieste/ora senza login) né dalla sua cache.
+        # Main signal: a higher version number on GitHub. Independent of the
+        # API (60 requests/hour without login) and of its cache.
         if self.remote_version and _vtuple(self.remote_version) > _vtuple(self.version):
             return True
-        # Commit installato sconosciuto (install da cartella): allinea a GitHub.
+        # Unknown installed commit (installed from a folder): align with GitHub.
         return not self.commit or r.status == "ahead"
 
     @property
     def verified(self) -> bool:
-        """True se si è potuto stabilire se c'è un aggiornamento."""
+        """True if we could establish whether an update exists."""
         return bool(self.remote.ok and (self.remote_version or self.remote.status
                                         or self.commit == self.remote.sha))
 
@@ -341,7 +357,7 @@ def _vtuple(v: str) -> tuple[int, ...]:
 
 
 def remote_cockpit_version(sha: str) -> str:
-    """Legge __version__ dal commit `sha` su raw.githubusercontent.com (fuori dal limite dell'API)."""
+    """Read __version__ at commit `sha` from raw.githubusercontent.com (outside the API rate limit)."""
     slug = _github_slug(COCKPIT_REPO)
     url = f"https://raw.githubusercontent.com/{slug}/{sha}/iris_cockpit/__init__.py"
     try:
@@ -354,7 +370,7 @@ def remote_cockpit_version(sha: str) -> str:
 
 
 def installed_cockpit_commit() -> str:
-    """Commit da cui è stato installato il pacchetto (PEP 610, scritto da pip e uv)."""
+    """Commit the package was installed from (PEP 610, written by pip and uv)."""
     from importlib.metadata import PackageNotFoundError, distribution
     try:
         raw = distribution("iris-cockpit").read_text("direct_url.json")
@@ -375,10 +391,10 @@ def check_cockpit(version: str) -> CockpitInfo:
 
 
 def cockpit_update_cmd(sha: str) -> list[str] | None:
-    """Reinstalla il cockpit al commit `sha` nell'ambiente in cui gira ora.
+    """Reinstall the cockpit at commit `sha` into the environment it runs in.
 
-    Il commit esplicito evita che pip/uv riusino una versione in cache, e non
-    passa da `pipx install --force`, che con il backend uv fallisce.
+    Pinning the commit stops pip/uv from reusing a cached build, and avoids
+    `pipx install --force`, which fails with pipx's uv backend.
     """
     import importlib.util
     import sys
@@ -402,25 +418,25 @@ def _can_rw(path: Path) -> bool:
 
 def host_report() -> list[tuple[str, bool, str]]:
     rows: list[tuple[str, bool, str]] = []
-    fix = "sudo usermod -aG render,video $USER, poi esci e rientra"
+    fix = "sudo usermod -aG render,video $USER, then log out and back in"
 
-    # Conta il permesso reale sui dispositivi, non l'appartenenza ai gruppi:
-    # su molte distro le regole udev li rendono accessibili a tutti (0666).
+    # Check the actual permission on the devices, not group membership: on
+    # many distros udev rules make them accessible to everyone (0666).
     kfd = Path("/dev/kfd")
     kfd_ok = kfd.exists() and _can_rw(kfd)
     if not kfd.exists():
-        rows.append(("/dev/kfd", False, "mancante: driver amdgpu/KFD non attivo"))
+        rows.append(("/dev/kfd", False, "missing: amdgpu/KFD driver not active"))
     else:
-        rows.append(("/dev/kfd", kfd_ok, "accessibile" if kfd_ok else f"non accessibile: {fix}"))
+        rows.append(("/dev/kfd", kfd_ok, "accessible" if kfd_ok else f"not accessible: {fix}"))
 
     nodes = sorted(Path("/dev/dri").glob("renderD*"))
     usable = [n for n in nodes if _can_rw(n)]
     if not nodes:
-        rows.append(("render node", False, "nessun /dev/dri/renderD*: driver amdgpu non attivo"))
+        rows.append(("render node", False, "no /dev/dri/renderD*: amdgpu driver not active"))
     elif usable:
-        rows.append(("render node", True, f"{', '.join(n.name for n in usable)} accessibile"))
+        rows.append(("render node", True, f"{', '.join(n.name for n in usable)} accessible"))
     else:
-        rows.append(("render node", False, f"{', '.join(n.name for n in nodes)} non accessibile: {fix}"))
+        rows.append(("render node", False, f"{', '.join(n.name for n in nodes)} not accessible: {fix}"))
 
     try:
         my_groups = {grp.getgrgid(g).gr_name for g in os.getgroups()}
@@ -428,11 +444,11 @@ def host_report() -> list[tuple[str, bool, str]]:
         my_groups = set()
     missing = [g for g in ("render", "video") if g not in my_groups]
     if not missing:
-        rows.append(("gruppi", True, "render, video"))
+        rows.append(("groups", True, "render, video"))
     elif kfd_ok and usable:
-        rows.append(("gruppi", True, f"non sei in {', '.join(missing)}, ma non serve: i dispositivi sono accessibili"))
+        rows.append(("groups", True, f"not in {', '.join(missing)}, but not needed: the devices are accessible"))
     else:
-        rows.append(("gruppi", False, f"manca {', '.join(missing)}: {fix}"))
+        rows.append(("groups", False, f"missing {', '.join(missing)}: {fix}"))
     gtt = None
     for p in Path("/sys/class/drm").glob("card*/device/mem_info_gtt_total"):
         try:
@@ -441,9 +457,9 @@ def host_report() -> list[tuple[str, bool, str]]:
             pass
     if gtt:
         gb = gtt / 1024**3
-        rows.append(("memoria GTT", gb >= 30, f"{gb:.0f} GiB" + ("" if gb >= 30 else " (bassa per i modelli 9B: vedi amd-ttm)")))
+        rows.append(("GTT memory", gb >= 30, f"{gb:.0f} GiB" + ("" if gb >= 30 else " (low for 9B models: see amd-ttm)")))
     else:
-        rows.append(("memoria GTT", False, "non rilevata"))
+        rows.append(("GTT memory", False, "not detected"))
     rows.append(("kernel", True, os.uname().release))
     return rows
 
