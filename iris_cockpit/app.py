@@ -243,7 +243,7 @@ class IrisCockpit(App):
         elif self.remote.ok:
             t.append(f"{self.remote.sha[:7]}  {self.remote.date}  {self.remote.message}\n")
             if image.present:
-                if image.commit == self.remote.sha:
+                if image.commit == self.remote.sha or self.remote.status in ("behind", "identical"):
                     t.append("Sei aggiornato all'ultimo commit.", style="bold green")
                 elif image.commit in ("", "unknown"):
                     t.append("Versione installata sconosciuta: aggiorna per allinearti.", style="bold yellow")

@@ -242,6 +242,10 @@ class RemoteInfo:
     date: str = ""
     message: str = ""
     error: str = ""
+    # Esito del confronto installato...remoto: "ahead" = il remoto è più nuovo.
+    # L'API senza login può restituire per ~1 minuto un commit vecchio: senza
+    # questo controllo si "aggiornerebbe" a una versione precedente.
+    status: str = ""
     new_commits: list[str] = field(default_factory=list)
 
 
@@ -273,6 +277,7 @@ def check_remote(cfg: Config, installed_sha: str = "") -> RemoteInfo:
             if installed_sha and installed_sha not in ("unknown", info.sha):
                 try:
                     cmp = _get_json(f"https://api.github.com/repos/{slug}/compare/{installed_sha}...{info.sha}")
+                    info.status = cmp.get("status", "")
                     info.new_commits = [
                         f"{c['sha'][:7]}  {c['commit']['committer']['date'][:10]}  "
                         f"{c['commit']['message'].splitlines()[0]}"
@@ -313,7 +318,11 @@ class CockpitInfo:
 
     @property
     def update_available(self) -> bool:
-        return bool(self.remote.ok and self.remote.sha and self.commit != self.remote.sha)
+        r = self.remote
+        if not (r.ok and r.sha) or self.commit == r.sha:
+            return False
+        # Commit installato sconosciuto (install da cartella): allinea a GitHub.
+        return not self.commit or r.status == "ahead"
 
 
 def installed_cockpit_commit() -> str:
